@@ -1,4 +1,4 @@
-# Get config variables
+# -*- coding: utf-8 -*-
 from PIL import Image
 import json
 import cv2
@@ -8,6 +8,12 @@ import keras_ocr
 import numpy as np
 import time
 import datetime
+import argparse
+parser = argparse.ArgumentParser(description='Process some arguments.')
+parser.add_argument('--source', type=str, help='Name argument')
+args = parser.parse_args()
+
+
 
 with open('roboflow_config.json') as f:
     config = json.load(f)
@@ -37,17 +43,16 @@ else:
 
 
 
-# Definir las coordenadas de la línea que el carro debe cruzar (un poco a la izquierda)
+
 line_x = None
 line_y = None
+draw_line = True
 
 # Definir el desplazamiento hacia la izquierda (en píxeles)
 left_offset = 120
 # Get webcam interface via opencv-python
-video = cv2.VideoCapture("test3.mp4")
-
-# keras-ocr will automatically download pretrained
-# weights for the detector and recognizer.
+source = args.source if args.source else 0
+video = cv2.VideoCapture(source)
 pipeline = keras_ocr.pipeline.Pipeline()
 
 
@@ -58,7 +63,7 @@ def make_request_with_retries(url, data, headers, max_retries=3, retry_delay=5):
             resp = requests.post(url, data=data, headers=headers, stream=True)
             return resp
         except requests.exceptions.ConnectionError:
-            print(f"Connection error. Retrying in {retry_delay} seconds...")
+            print("Connection error. Retrying in {} seconds...".format(retry_delay))
             time.sleep(retry_delay)
             retries += 1
     print("Max retries reached. Unable to make the request.")
@@ -67,20 +72,18 @@ def make_request_with_retries(url, data, headers, max_retries=3, retry_delay=5):
 # Infer via the Roboflow Infer API and return the result
 def infer(ret, img):
     # Get the current image from the webcam
-    line_x = None
-    line_y = None
-
-    
+    global line_x, line_y
+    global draw_line 
     car_crossed_line = False
-    # Resize (while maintaining the aspect ratio) to improve speed and save bandwidth
-    # Encode image to base64 string
     retval, buffer = cv2.imencode('.jpg', img)
     height, width, _ = img.shape
     img_str = base64.b64encode(buffer)
-    if line_x is None:
-        line_x = width // 2 - left_offset
-        line_y = 0
-    cv2.line(img, (line_x, line_y), (line_x, height), (255, 0, 0), 2)
+    if draw_line:
+            if line_x is None:
+                line_x = width // 2 - left_offset
+                line_y = 0
+            cv2.line(img, (line_x, line_y), (line_x, height), (255, 255, 255, 128), 2)
+
 
     # Get predictions from Roboflow Infer API
     resp_data = None
@@ -102,7 +105,6 @@ def infer(ret, img):
         
         confidence = prediction['confidence']
         
-
         frame = img
         if prediction['class'] == "License_Plate":
         # Check if the car is inside the line crossing ROI
@@ -111,21 +113,25 @@ def infer(ret, img):
                             color = (0, 255, 0) 
                             label = "License"
                             
-
                             # Check if the car crossed the line
                             if not car_crossed_line:
                                 car_crossed_line = True
+                                draw_line = False
                                 # Save the frame at the moment the car crossed the line
                                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                                save_filename = f"car_capture_{timestamp}.jpg"
-                                cv2.imwrite(save_filename, frame)        
-                                getLiscensePlate(img, x, y, w, h)
+                                img = video.read()[1]
+                                save_filename = "capture/car_{}.jpg".format(timestamp)
+                                save_capture = "plate/plate_{}.jpg".format(timestamp)
+                                crop_frame,plate  = getLiscensePlate(img, x, y, w, h)
                                 writeOnStream(x, y, w, h,
                       prediction['class'],
                       img)
-        
-      
+                                cv2.imwrite(save_filename, frame)
+                                cv2.imwrite(save_capture,crop_frame)
+                                with open('results.csv', 'a') as f:
+                                   f.write(timestamp + ',' + plate + ',' + save_filename + ',' + save_capture + '\n')
     car_crossed_line = False
+    draw_line = True
     return img
 
 
@@ -156,9 +162,14 @@ def getLiscensePlate(frame, x, y, width, height):
     # Get Predictions
     prediction_groups = pipeline.recognize(images)
     # Print the predictions
+    plate = []
     for predictions in prediction_groups:
         for prediction in predictions:
+            plate.append(prediction[0])
             print(prediction[0])
+
+    plate = '|'.join(plate)
+    return crop_frame , plate
 
 
 def preprocessImage(image):
@@ -184,7 +195,7 @@ def preprocessImage(image):
 if __name__ == '__main__':
     # Main loop; infers sequentially until you press "q"
     frame_count = 0
-    frames_to_skip = 20
+    frames_to_skip = 15
     while True:
         # On "q" keypress, exit
         if (cv2.waitKey(1) == ord('q')):
