@@ -11,6 +11,7 @@ import datetime
 import argparse
 parser = argparse.ArgumentParser(description='Process some arguments.')
 parser.add_argument('--source', type=str, help='Name argument')
+parser.add_argument('--line_left', type=int, help='Name argument')
 args = parser.parse_args()
 
 
@@ -21,7 +22,6 @@ with open('roboflow_config.json') as f:
     ROBOFLOW_API_KEY = config["ROBOFLOW_API_KEY"]
     ROBOFLOW_MODEL = config["ROBOFLOW_MODEL"]
     LOCAL_SERVER = config["LOCAL_SERVER"]
-
     FRAMERATE = config["FRAMERATE"]
     BUFFER = config["BUFFER"]
 
@@ -49,7 +49,7 @@ line_y = None
 draw_line = True
 
 # Definir el desplazamiento hacia la izquierda (en píxeles)
-left_offset = 120
+left_offset = args.line_left if args.line_left else 530
 # Get webcam interface via opencv-python
 source = args.source if args.source else 0
 video = cv2.VideoCapture(source)
@@ -80,7 +80,7 @@ def infer(ret, img):
     img_str = base64.b64encode(buffer)
     if draw_line:
             if line_x is None:
-                line_x = width // 2 - left_offset
+                line_x = left_offset
                 line_y = 0
             cv2.line(img, (line_x, line_y), (line_x, height), (255, 255, 255, 128), 2)
 
@@ -112,13 +112,12 @@ def infer(ret, img):
                             # Draw bounding box and label for the detected car
                             color = (0, 255, 0) 
                             label = "License"
-                            
                             # Check if the car crossed the line
                             if not car_crossed_line:
                                 car_crossed_line = True
                                 draw_line = False
                                 # Save the frame at the moment the car crossed the line
-                                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
                                 img = video.read()[1]
                                 save_filename = "capture/car_{}.jpg".format(timestamp)
                                 save_capture = "plate/plate_{}.jpg".format(timestamp)
@@ -128,7 +127,7 @@ def infer(ret, img):
                       img)
                                 cv2.imwrite(save_filename, frame)
                                 cv2.imwrite(save_capture,crop_frame)
-                                with open('results.csv', 'a') as f:
+                                with open('placas.csv', 'a') as f:
                                    f.write(timestamp + ',' + plate + ',' + save_filename + ',' + save_capture + '\n')
     car_crossed_line = False
     draw_line = True
@@ -166,8 +165,6 @@ def getLiscensePlate(frame, x, y, width, height):
     for predictions in prediction_groups:
         for prediction in predictions:
             plate.append(prediction[0])
-            print(prediction[0])
-
     plate = '|'.join(plate)
     return crop_frame , plate
 
